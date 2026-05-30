@@ -7,15 +7,25 @@ class RTVoiceStream {
   final AudioEngine audioEngine;
   final UDPService udpService;
   StreamSubscription<Uint8List>? _audioSub;
+  StreamSubscription<bool>? _receivingSub;
+  bool _isMuted = false;
 
   RTVoiceStream({required this.audioEngine, required this.udpService});
 
-  // Start sending audio on PTT press
+  Future<void> init() async {
+    _receivingSub = audioEngine.audioReceivingStream.listen((isReceiving) {
+      _isMuted = isReceiving;
+    });
+  }
+
   Future<void> startPTT() async {
     await audioEngine.startRecording((frame) async {
       await udpService.sendFrame(frame);
     });
     _audioSub = audioEngine.recordedStream.listen((frame) async {
+      if (_isMuted && audioEngine.isEchoCancellationEnabled) {
+        return;
+      }
       await udpService.sendFrame(frame);
     });
   }
@@ -27,7 +37,12 @@ class RTVoiceStream {
     _audioSub = null;
   }
 
-  // Handle incoming UDP audio, already managed within UDPService by default,
-  // Forward to AudioEngine's playAudio or hook here for more processing.
-  // For extension: could add codecs/transforms here.
+  void setEchoCancellation(bool enabled) {
+    audioEngine.setEchoCancellation(enabled);
+  }
+
+  Future<void> dispose() async {
+    await _receivingSub?.cancel();
+    await _audioSub?.cancel();
+  }
 }

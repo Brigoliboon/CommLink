@@ -1,22 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../utils/app_colors.dart';
-import '../../core/backend/peer_discovery.dart';
 import '../../core/backend/state_controller.dart';
-import '../../config/network_config.dart';
 
-class ChannelSelectionScreen extends StatefulWidget {
+class ChannelSelectionScreen extends StatelessWidget {
   const ChannelSelectionScreen({super.key});
 
-  @override
-  State<ChannelSelectionScreen> createState() => _ChannelSelectionScreenState();
-}
-
-class _ChannelSelectionScreenState extends State<ChannelSelectionScreen> {
-  late BackendStateController _backendController;
-  late PeerDiscoveryService _peerDiscoveryService;
-  int _selectedChannel = NetworkConfig.DEFAULT_CHANNEL;
-
-  final List<Map<String, dynamic>> _channels = [
+  static const List<Map<String, dynamic>> _channels = [
     {'id': 1, 'freq': '462.5625 MHz'},
     {'id': 2, 'freq': '462.5875 MHz'},
     {'id': 3, 'freq': '462.6125 MHz'},
@@ -28,24 +18,9 @@ class _ChannelSelectionScreenState extends State<ChannelSelectionScreen> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    _peerDiscoveryService = PeerDiscoveryService(selfName: 'Me');
-    _backendController = BackendStateController(_peerDiscoveryService);
-    _selectedChannel = _backendController.currentChannel;
-    _backendController.channelStream.listen((ch) {
-      if (mounted) setState(() => _selectedChannel = ch);
-    });
-  }
-
-  @override
-  void dispose() {
-    _backendController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final controller = context.watch<BackendStateController>();
+
     return Scaffold(
       backgroundColor: AppColors.forestGreen,
       appBar: AppBar(
@@ -64,15 +39,11 @@ class _ChannelSelectionScreenState extends State<ChannelSelectionScreen> {
         itemCount: _channels.length,
         itemBuilder: (context, index) {
           final channel = _channels[index];
-          final isSelected = channel['id'] == _selectedChannel;
+          final chId = channel['id'] as int;
+          final isSelected = chId == controller.currentChannel;
 
           return GestureDetector(
-            onTap: () {
-              _backendController.setChannel(channel['id']);
-              setState(() {
-                _selectedChannel = channel['id'];
-              });
-            },
+            onTap: () => controller.setChannel(chId),
             child: Container(
               decoration: BoxDecoration(
                 color: isSelected ? AppColors.yellow : AppColors.lightGreen,
@@ -80,7 +51,7 @@ class _ChannelSelectionScreenState extends State<ChannelSelectionScreen> {
                 boxShadow: [
                   BoxShadow(
                     color: (isSelected ? AppColors.yellow : Colors.black)
-                        .withOpacity(0.3),
+                        .withValues(alpha: 0.3),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -90,7 +61,7 @@ class _ChannelSelectionScreenState extends State<ChannelSelectionScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    'CH ${channel['id']}',
+                    'CH $chId',
                     style: TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
@@ -99,32 +70,13 @@ class _ChannelSelectionScreenState extends State<ChannelSelectionScreen> {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    channel['freq'],
+                    channel['freq'] as String,
                     style: TextStyle(
                       fontSize: 12,
                       color: isSelected
-                          ? AppColors.forestGreen.withOpacity(0.8)
-                          : AppColors.white.withOpacity(0.8),
+                          ? AppColors.forestGreen.withValues(alpha: 0.8)
+                          : AppColors.white.withValues(alpha: 0.8),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.people,
-                        size: 16,
-                        color: isSelected ? AppColors.forestGreen : AppColors.yellow,
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        '${channel['users']}',
-                        style: TextStyle(
-                          color: isSelected ? AppColors.forestGreen : AppColors.yellow,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),

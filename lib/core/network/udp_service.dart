@@ -12,10 +12,13 @@ class UDPService {
   final AudioEngine _audioEngine;
   final StreamController<String> _audioLogStream = StreamController.broadcast();
   String? _localIpAddress;
+  int _currentChannel;
 
   Stream<String> get audioLogStream => _audioLogStream.stream;
+  int get currentChannel => _currentChannel;
 
-  UDPService(this._audioEngine);
+  UDPService(this._audioEngine, {int channel = NetworkConfig.DEFAULT_CHANNEL})
+      : _currentChannel = channel;
 
   Future<void> init() async {
     // Get local IP address to filter out loopback
@@ -24,11 +27,15 @@ class UDPService {
     _sender = await UDP.bind(Endpoint.any());
     _receiver = await UDP.bind(
       Endpoint.multicast(
-        InternetAddress(NetworkConfig.MULTICAST_IP),
+        InternetAddress(NetworkConfig.getMulticastIp(_currentChannel)),
         port: Port(NetworkConfig.PORT),
       ),
     );
 
+    _startReceiver();
+  }
+
+  void _startReceiver() {
     _receiver.asStream().listen((datagram) {
       if (datagram != null) {
         final senderIp = datagram.address.address;
@@ -52,7 +59,7 @@ class UDPService {
       await _sender.send(
         frame,
         Endpoint.multicast(
-          InternetAddress(NetworkConfig.MULTICAST_IP),
+          InternetAddress(NetworkConfig.getMulticastIp(_currentChannel)),
           port: Port(NetworkConfig.PORT),
         ),
       );
@@ -85,6 +92,26 @@ class UDPService {
       developer.log('Error getting local IP address: $e');
       return '127.0.0.1';
     }
+  }
+
+  Future<void> switchChannel(int channel) async {
+    if (channel < 1 || channel > NetworkConfig.CHANNEL_COUNT) return;
+    if (_currentChannel == channel) return;
+
+    developer.log('📻 Switching UDP channel: $_currentChannel → $channel');
+    _currentChannel = channel;
+
+    // Rebind receiver to new multicast group
+    _receiver.close();
+    _receiver = await UDP.bind(
+      Endpoint.multicast(
+        InternetAddress(NetworkConfig.getMulticastIp(_currentChannel)),
+        port: Port(NetworkConfig.PORT),
+      ),
+    );
+
+    _startReceiver();
+    developer.log('✔ Switched UDP to channel $channel (${NetworkConfig.getMulticastIp(channel)})');
   }
 
   Future<void> dispose() async {

@@ -17,13 +17,14 @@ class AudioEngine {
   final int _maxBufferSize = 10;
   Timer? _bufferFlushTimer;
 
-  // --- MISSING FIELDS YOU NEED ---
+  bool _echoCancellationEnabled = true;
+  bool _isReceivingAudio = false;
+
   final StreamController<bool> _audioReceivingController =
       StreamController<bool>.broadcast();
   Stream<bool> get audioReceivingStream => _audioReceivingController.stream;
 
   Timer? _receivingTimeoutTimer;
-  // --------------------------------
 
   Future<void> init() async {
     await _recorder.openRecorder();
@@ -53,7 +54,7 @@ class AudioEngine {
         interleaved: true,
         bufferSize: 8192,
         onBufferUnderflow: () {
-          print('⚠️ Audio buffer underrun detected');
+          // Audio buffer underrun - could log in production
         },
       );
       _isPlayerStarted = true;
@@ -63,11 +64,12 @@ class AudioEngine {
   void playAudio(Uint8List frame) {
     if (!_isPlayerStarted) return;
 
-    // Now works — controller exists
+    _isReceivingAudio = true;
     _audioReceivingController.add(true);
 
     _receivingTimeoutTimer?.cancel();
     _receivingTimeoutTimer = Timer(const Duration(milliseconds: 500), () {
+      _isReceivingAudio = false;
       _audioReceivingController.add(false);
     });
 
@@ -81,6 +83,14 @@ class AudioEngine {
       _audioBuffer.removeAt(0);
     }
   }
+
+  void setEchoCancellation(bool enabled) {
+    _echoCancellationEnabled = enabled;
+  }
+
+  bool get isEchoCancellationEnabled => _echoCancellationEnabled;
+
+  bool get isReceivingAudio => _isReceivingAudio;
 
   void _startBufferFlush() {
     _bufferFlushTimer =

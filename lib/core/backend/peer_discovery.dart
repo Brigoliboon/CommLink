@@ -9,10 +9,11 @@ import '../../config/network_config.dart';
 
 class Peer {
   final String name;
+  final String fingerprint;
   final InternetAddress address;
   final DateTime lastSeen;
 
-  Peer(this.name, this.address, this.lastSeen);
+  Peer(this.name, this.fingerprint, this.address, this.lastSeen);
 }
 
 class PeerDiscoveryService {
@@ -38,8 +39,16 @@ class PeerDiscoveryService {
   Timer? _networkMonitor;
 
   final String selfName;
+  final String selfFingerprint;
+  int _currentChannel;
 
-  PeerDiscoveryService({required this.selfName});
+  PeerDiscoveryService({
+    required this.selfName,
+    required this.selfFingerprint,
+    int channel = NetworkConfig.DEFAULT_CHANNEL,
+  }) : _currentChannel = channel;
+
+  int get currentChannel => _currentChannel;
 
   // ---------------------------------------------------------------------------
   // START SERVICE
@@ -63,11 +72,12 @@ class PeerDiscoveryService {
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         _log("🔄 Attempting to bind sockets (attempt $attempt/$maxRetries)...");
+        _log("   Channel: $_currentChannel → ${NetworkConfig.getMulticastIp(_currentChannel)}");
 
         // Listener uses multicast endpoint
         _listener = await UDP.bind(
           Endpoint.multicast(
-            InternetAddress(NetworkConfig.MULTICAST_IP),
+            InternetAddress(NetworkConfig.getMulticastIp(_currentChannel)),
             port: Port(NetworkConfig.PORT),
           ),
         );
@@ -107,17 +117,19 @@ class PeerDiscoveryService {
         final json = jsonDecode(msg);
 
         if (json["type"] == "peer_announce" &&
-            json["name"] != selfName) {
+            json["fingerprint"] != selfFingerprint) {
           final ip = datagram.address.address;
+          final fingerprint = json["fingerprint"] ?? json["name"];
 
-          _peers[ip] = Peer(
+          _peers[fingerprint] = Peer(
             json["name"],
+            fingerprint,
             datagram.address,
             DateTime.now(),
           );
 
           _peerStream.add(_peers.values.toList());
-          _log("📩 Peer updated: ${json["name"]} ($ip)");
+          _log("📩 Peer updated: ${json["name"]} ($ip) [$fingerprint]");
         }
       } catch (e) {
         _log("❌ Decode error: $e");
@@ -137,18 +149,19 @@ class PeerDiscoveryService {
       final data = jsonEncode({
         "type": "peer_announce",
         "name": selfName,
+        "fingerprint": selfFingerprint,
       });
 
       _broadcaster!.send(
         utf8.encode(data),
         Endpoint.multicast(
-          InternetAddress(NetworkConfig.MULTICAST_IP),
+          InternetAddress(NetworkConfig.getMulticastIp(_currentChannel)),
           port: Port(NetworkConfig.PORT),
         ),
       );
     });
 
-    _log("📡 Announcer started");
+    _log("📡 Announcer started on channel $_currentChannel");
   }
 
   // ---------------------------------------------------------------------------
@@ -225,6 +238,43 @@ class PeerDiscoveryService {
       _log("✔ Sockets rebound successfully");
     } else {
       _log("❌ Failed to rebind sockets");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // SWITCH CHANNEL
+  // ---------------------------------------------------------------------------
+  Future<void> switchChannel(int channel) async {
+    if (channel < 1 || channel > NetworkConfig.CHANNEL_COUNT) return;
+    if (_currentChannel == channel) return;
+
+    _log("📻 Switching channel: $_currentChannel → $channel");
+
+    // Clear peers from old channel
+    _peers.clear();
+    _peerStream.add(_peers.values.toList());
+
+    _currentChannel = channel;
+
+    // Close old sockets
+    _listener?.close();
+    _broadcaster?.close();
+    _listener = null;
+    _broadcaster = null;
+
+    // Cancel timers on old channel
+    _announceTimer?.cancel();
+    _announceTimer = null;
+
+    // Rebind to new channel's multicast group
+    await _bindSockets();
+
+    if (_listener != null) {
+      _startListeners();
+      _startAnnouncer();
+      _log("✔ Switched to channel $channel (${NetworkConfig.getMulticastIp(channel)})");
+    } else {
+      _log("❌ Failed to switch channel — socket bind failed");
     }
   }
 

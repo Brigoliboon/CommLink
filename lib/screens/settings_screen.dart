@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/app_colors.dart';
+import '../core/database/database_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,6 +14,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _darkMode = true;
   bool _vibrationOnPTT = true;
   bool _debugMode = false;
+  final TextEditingController _serverUrlController = TextEditingController();
+  bool _isServerConnected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final db = DatabaseService();
+    _serverUrlController.text = db.serverUrl;
+    _checkServerConnection();
+  }
+
+  Future<void> _checkServerConnection() async {
+    final db = DatabaseService();
+    final connected = await db.testConnection();
+    if (mounted) setState(() => _isServerConnected = connected);
+  }
+
+  Future<void> _saveServerUrl() async {
+    final db = DatabaseService();
+    db.setServerUrl(_serverUrlController.text);
+    await _checkServerConnection();
+    if (_isServerConnected && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Server connected')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +54,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          _buildSettingsSection(
+            'Server',
+            [
+              _buildServerTile(),
+            ],
+          ),
+          const SizedBox(height: 20),
           _buildSettingsSection(
             'Audio',
             [
@@ -175,6 +210,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text(
             status,
             style: TextStyle(color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServerTile() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                _isServerConnected ? Icons.cloud_done : Icons.cloud_off,
+                color: _isServerConnected ? Colors.green : Colors.red,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _isServerConnected ? 'Connected' : 'Not Connected',
+                style: TextStyle(
+                  color: _isServerConnected ? Colors.green : Colors.red,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _serverUrlController,
+            style: const TextStyle(color: AppColors.white, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'http://192.168.1.x:3000',
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.save, color: AppColors.white, size: 20),
+                onPressed: _saveServerUrl,
+              ),
+            ),
           ),
         ],
       ),

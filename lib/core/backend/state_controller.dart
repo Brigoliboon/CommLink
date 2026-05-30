@@ -5,19 +5,30 @@ import '../network/udp_service.dart';
 import '../backend/rt_voice_stream.dart';
 
 class BackendStateController {
-  final PeerDiscoveryService discoveryService;
+  late final PeerDiscoveryService _discoveryService;
   late final AudioEngine _audioEngine;
   late final UDPService _udpService;
   late final RTVoiceStream _voiceStream;
-  int _currentChannel = 1;
+
+  int _currentChannel;
   bool _isPTTActive = false;
+
   final StreamController<bool> _pttController = StreamController.broadcast();
   final StreamController<int> _channelController = StreamController.broadcast();
-  final StreamController<String> _eventLogController = StreamController<String>.broadcast();
+  final StreamController<String> _eventLogController = StreamController.broadcast();
 
-  BackendStateController(this.discoveryService) {
+  BackendStateController({
+    required String deviceName,
+    required String deviceFingerprint,
+    int initialChannel = 1,
+  }) : _currentChannel = initialChannel {
+    _discoveryService = PeerDiscoveryService(
+      selfName: deviceName,
+      selfFingerprint: deviceFingerprint,
+      channel: initialChannel,
+    );
     _audioEngine = AudioEngine();
-    _udpService = UDPService(_audioEngine);
+    _udpService = UDPService(_audioEngine, channel: initialChannel);
     _voiceStream = RTVoiceStream(audioEngine: _audioEngine, udpService: _udpService);
     _initializeServices();
   }
@@ -26,29 +37,46 @@ class BackendStateController {
     await _audioEngine.init();
     await _audioEngine.initPlayer();
     await _udpService.init();
-    await discoveryService.start();
+    await _discoveryService.start();
+    _log('CommLink initialized on channel $_currentChannel');
   }
 
+  // -- Accessors ----------------------------------------------------------
+
+  PeerDiscoveryService get discoveryService => _discoveryService;
+  AudioEngine get audioEngine => _audioEngine;
+
   Stream<String> get eventLogStream => _eventLogController.stream;
+  Stream<List<Peer>> get peerStream => _discoveryService.peerStream;
+  List<Peer> get currentPeers => _discoveryService.activePeers;
 
-  // Peer list stream
-  Stream<List<Peer>> get peerStream => discoveryService.peerStream;
-  List<Peer> get currentPeers => discoveryService.activePeers;
-
-  // PTT State stream
   Stream<bool> get pttStream => _pttController.stream;
   bool get isPTTActive => _isPTTActive;
 
-  // Channel State stream
   Stream<int> get channelStream => _channelController.stream;
   int get currentChannel => _currentChannel;
 
-  void setChannel(int channel) {
-    if (_currentChannel != channel) {
-      _currentChannel = channel;
-      _channelController.add(_currentChannel);
-    }
+  // -- Channel -----------------------------------------------------------
+
+  Future<void> setChannel(int channel) async {
+    if (_currentChannel == channel) return;
+    if (channel < 1 || channel > 8) return;
+
+    _log('Switching to channel $channel...');
+
+    _currentChannel = channel;
+    _channelController.add(_currentChannel);
+
+    // Switch both services to the new multicast group
+    await Future.wait([
+      _discoveryService.switchChannel(channel),
+      _udpService.switchChannel(channel),
+    ]);
+
+    _log('Now on channel $channel');
   }
+
+  // -- PTT ---------------------------------------------------------------
 
   void setPTTState(bool active) async {
     if (_isPTTActive != active) {
@@ -63,11 +91,17 @@ class BackendStateController {
     }
   }
 
+  // -- Logging -----------------------------------------------------------
+
+  void _log(String msg) => _eventLogController.add(msg);
+
+  // -- Dispose -----------------------------------------------------------
+
   void dispose() {
     _pttController.close();
     _channelController.close();
     _eventLogController.close();
-    discoveryService.dispose();
+    _discoveryService.dispose();
     _udpService.dispose();
   }
 }

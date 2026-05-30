@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../utils/app_colors.dart';
+import '../utils/device_info.dart';
 import '../widgets/waveform_painter.dart';
-import '../../core/backend/peer_discovery.dart';
 import '../../core/backend/state_controller.dart';
 import 'dart:async';
 import 'dart:io';
 
 class PTTHomeScreen extends StatefulWidget {
-  const PTTHomeScreen({super.key});
+  final bool isGuestMode;
+
+  const PTTHomeScreen({super.key, this.isGuestMode = true});
 
   @override
   State<PTTHomeScreen> createState() => _PTTHomeScreenState();
@@ -17,18 +20,8 @@ class _PTTHomeScreenState extends State<PTTHomeScreen>
     with SingleTickerProviderStateMixin {
   bool _isPressing = false;
   late AnimationController _waveController;
-  late PeerDiscoveryService _peerDiscoveryService;
-  late BackendStateController _backendController;
-  late Stream<List<Peer>> _peerStream;
-  late Stream<int> _channelStream;
-  late Stream<bool> _audioReceivingStream;
-  int _currentChannel = 1;
-  List<Peer> _peers = [];
-  bool _isReceivingAudio = false;
-  late final StreamSubscription<List<Peer>> _peerSub;
-  late final StreamSubscription<int> _chSub;
-  late final StreamSubscription<bool> _audioReceivingSub;
   String? _localIp;
+  String? _fingerprint;
 
   @override
   void initState() {
@@ -37,20 +30,13 @@ class _PTTHomeScreenState extends State<PTTHomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    _peerDiscoveryService = PeerDiscoveryService(selfName: 'Me');
-    _backendController = BackendStateController(_peerDiscoveryService);
-    _peerDiscoveryService.start();
-    _peerStream = _backendController.peerStream;
-    _channelStream = _backendController.channelStream;
-    _peerSub = _peerStream.listen((peers) {
-      if (mounted) setState(() => _peers = peers);
-    });
-    _chSub = _channelStream.listen((ch) {
-      if (mounted) setState(() => _currentChannel = ch);
-    });
-    _currentChannel = _backendController.currentChannel;
-    _peers = _backendController.currentPeers;
     _getLocalIp();
+    _getFingerprint();
+  }
+
+  Future<void> _getFingerprint() async {
+    final fp = await getDeviceFingerprint();
+    if (mounted) setState(() => _fingerprint = fp);
   }
 
   Future<void> _getLocalIp() async {
@@ -59,41 +45,39 @@ class _PTTHomeScreenState extends State<PTTHomeScreen>
       for (final interface in interfaces) {
         for (final addr in interface.addresses) {
           if (!addr.isLoopback && addr.type == InternetAddressType.IPv4) {
-            setState(() => _localIp = addr.address);
+            if (mounted) setState(() => _localIp = addr.address);
             return;
           }
         }
       }
     } catch (e) {
-      setState(() => _localIp = 'Unknown');
+      if (mounted) setState(() => _localIp = 'Unknown');
     }
   }
 
   @override
   void dispose() {
     _waveController.dispose();
-    _peerSub.cancel();
-    _chSub.cancel();
-    _audioReceivingSub.cancel();
-    _backendController.dispose();
     super.dispose();
   }
 
   void _onPTTPress() {
     setState(() => _isPressing = true);
     _waveController.repeat();
-    _backendController.setPTTState(true);
+    context.read<BackendStateController>().setPTTState(true);
   }
 
   void _onPTTRelease() {
     setState(() => _isPressing = false);
     _waveController.stop();
     _waveController.reset();
-    _backendController.setPTTState(false);
+    context.read<BackendStateController>().setPTTState(false);
   }
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<BackendStateController>();
+
     return Scaffold(
       backgroundColor: AppColors.forestGreen,
       appBar: AppBar(
@@ -126,14 +110,30 @@ class _PTTHomeScreenState extends State<PTTHomeScreen>
           if (_localIp != null)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                'My IP:  a0 a0 a0 a0 a0 a0 a0${_localIp ?? ''}',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
+              child: Column(
+                children: [
+                  Text(
+                    'My IP: ${_localIp ?? ''}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  if (_fingerprint != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Device ID: ${_fingerprint ?? ''}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           Container(
@@ -156,7 +156,7 @@ class _PTTHomeScreenState extends State<PTTHomeScreen>
                 const Icon(Icons.radio, color: AppColors.yellow, size: 28),
                 const SizedBox(width: 10),
                 Text(
-                  'Channel $_currentChannel',
+                  'Channel ${controller.currentChannel}',
                   style: const TextStyle(
                     color: AppColors.white,
                     fontSize: 24,
@@ -227,63 +227,8 @@ class _PTTHomeScreenState extends State<PTTHomeScreen>
                   },
                 ),
               ),
+),
             ),
-          ),
-          Container(
-            margin: const EdgeInsets.all(20),
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(
-              color: AppColors.lightGreen,
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.people, color: AppColors.yellow, size: 20),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Active Peers',
-                      style: TextStyle(
-                        color: AppColors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${_peers.length}',
-                      style: const TextStyle(
-                        color: AppColors.yellow,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                ..._peers.map((peer) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            size: 8,
-                            color: Colors.greenAccent, // No status logic yet
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              AppColors.debugMode ? '${peer.name} (${peer.address.address})' : peer.name,
-                              style: const TextStyle(color: AppColors.white),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )),
-              ],
-            ),
-          ),
         ],
       ),
     );
